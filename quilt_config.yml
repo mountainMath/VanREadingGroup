@@ -1,0 +1,5 @@
+theme: spacelab
+name: Van Reading Group
+type:
+  - html
+branch: main
