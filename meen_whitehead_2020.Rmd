@@ -1,0 +1,138 @@
+---
+title: "Meen & Whitehead 2020"
+#author: "Jens von Bergmann"
+date: "13/08/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.width=9)
+library(tidyverse)
+library(patchwork)
+```
+
+
+## Housing expenditures to income
+
+Figure 2.1 on page 21 looks at housing expenditure to income ratios in England. We reproduce this for Metro Vancouver using 2016 (individuals) PUMF data, utilizing the shelter cost, household income, after-tax household income and government transfers variables.
+
+
+```{r}
+# path to 2016 pumf data (spss format)
+path=file.path(getOption("custom_data_path"),"pumf/pumf_2016/Data","Census_2016_Individual_PUMF.sav") 
+pumf_data <- foreign::read.spss(path) %>%
+  as_tibble() %>%
+  set_names(names(.) %>% toupper) %>%
+  mutate(housing=SHELCO*12) %>%
+  mutate(lower=case_when(HHINC=="Under $2,000" ~ 0,
+                         TRUE ~ as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC),"^\\$[\\d,]+")))),
+         upper=case_when(HHINC=="$250,000 and over" ~ 350000,
+                         TRUE~as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC),"\\$[\\d,]+$"))))) %>%
+  mutate(income=(lower+upper)/2) %>%
+  mutate(lower2=case_when(HHINC_AT=="Under $2,000" ~ 0,
+                         TRUE ~ as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC_AT),"^\\$[\\d,]+")))),
+         upper2=case_when(HHINC_AT=="$250,000 and over" ~ 300000,
+                         TRUE~as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC_AT),"\\$[\\d,]+$"))))) %>%
+  mutate(income_at=(lower2+upper2)/2+GTRFS) %>%
+  filter(!is.na(income),!is.na(income_at),!is.na(housing),TENUR!="Not available") %>%
+  mutate(scir=pmin(1,housing/income),
+         scir_at=pmin(1,housing/income_at))
+
+plot_theme <- list(
+  geom_boxplot(outlier.shape=NA),
+  theme_light(),
+  scale_fill_manual(values=c("Owned by a member of the household"="steelblue","Rented or Band housing"="brown"),
+                    guide=FALSE),
+  facet_wrap("TENUR",ncol=1),
+  theme(axis.text.x = element_text(angle = 90,hjust=1))
+)
+
+housing_income_plot <- function(d){
+  p1 <- ggplot(d,aes(x=HHINC,y=scir,fill=TENUR)) +
+    plot_theme +
+    labs(title="Total income",
+         x=NULL,y="Shelter cost to income ratio")
+  
+  p2 <- ggplot(d,aes(x=HHINC_AT,y=scir_at,fill=TENUR)) +
+    plot_theme +
+    labs(title="After-tax income, including transfers",
+         x=NULL,y=NULL)
+  
+  p1 + p2
+}
+
+```
+
+```{r}
+pumf_data %>%
+  filter(CMA=="Vancouver",
+         PRIHM=="Person is primary maintainer", # count households only once
+         ATTSCH=="Did not attend school", # filter out students
+         GTRFS!=88888888,
+         GTRFS!=99999999,
+         #!(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")),
+         SHELCO>0) %>% # don't consider households without shelter cost
+  housing_income_plot() + plot_annotation(
+  title = 'Metro Vancouver housing expenditure to household income ratios',
+  subtitle = '(non-student lead households with shelter cost greater than 0)',
+  caption = 'StatCan 2016 Census Individuals PUMF'
+)
+```
+
+We see some effect of moderation in shelter cost to income ratios via government transfers for lower income renter households.
+
+National level data gives a cleaner comparison to the graph in Meek and Whitehead, and the effect is a little more pronounced.
+
+```{r}
+pumf_data %>%
+  filter(PRIHM=="Person is primary maintainer", # count households only once
+         ATTSCH=="Did not attend school", # filter out students
+         GTRFS!=88888888,
+         GTRFS!=99999999,
+         #!(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")),
+         SHELCO>0) %>% # don't consider households without shelter cost
+  housing_income_plot() +  plot_annotation(
+  title = 'Canada housing expenditure to household income ratios',
+  subtitle = '(non-student lead households with shelter cost greater than 0)',
+  caption = 'StatCan 2016 Census Individuals PUMF'
+)
+```
+
+For comparison we also look at Toronto and Calgary.
+
+
+```{r}
+pumf_data %>%
+  filter(CMA=="Toronto",
+         PRIHM=="Person is primary maintainer", # count households only once
+         ATTSCH=="Did not attend school", # filter out students
+         GTRFS!=88888888,
+         GTRFS!=99999999,
+         #!(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")),
+         SHELCO>0) %>% # don't consider households without shelter cost
+  housing_income_plot() +  plot_annotation(
+  title = 'Toronto housing expenditure to household income ratios',
+  subtitle = '(non-student lead households with shelter cost greater than 0)',
+  caption = 'StatCan 2016 Census Individuals PUMF'
+)
+```
+
+```{r}
+pumf_data %>%
+  filter(CMA=="Calgary",
+         PRIHM=="Person is primary maintainer", # count households only once
+         ATTSCH=="Did not attend school", # filter out students
+         GTRFS!=88888888,
+         GTRFS!=99999999,
+         #!(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")),
+         SHELCO>0) %>% # don't consider households without shelter cost
+  housing_income_plot() +  plot_annotation(
+  title = 'Calgary housing expenditure to household income ratios',
+  subtitle = '(non-student lead households with shelter cost greater than 0)',
+  caption = 'StatCan 2016 Census Individuals PUMF'
+)
+```
+
+
