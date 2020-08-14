@@ -135,4 +135,40 @@ pumf_data %>%
 )
 ```
 
+### Movers 5
+Another way to look at this is to only consider people that moved recently (in the past 5 years), excluding external migrants because it usually takes a couple of years until their income stabelizes.
 
+```{r}
+pumf_data %>%
+  filter(CMA=="Vancouver",
+         PRIHM=="Person is primary maintainer", # count households only once
+         ATTSCH=="Did not attend school", # filter out students
+         GTRFS!=88888888,
+         GTRFS!=99999999,
+         MOB5 %in% c("Non-migrants", "Different CSD, same census division",
+                     "Different CD, same province", "Interprovincial migrants"),
+         #!(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")),
+         SHELCO>0) %>% # don't consider households without shelter cost
+  housing_income_plot() + plot_annotation(
+  title = 'Metro Vancouver internal movers 5 housing expenditure to household income ratios',
+  subtitle = '(non-student lead households with shelter cost greater than 0)',
+  caption = 'StatCan 2016 Census Individuals PUMF'
+)
+```
+
+```{r}
+pumf_data %>%
+  filter(PRIHM=="Person is primary maintainer", # count households only once
+         ATTSCH=="Did not attend school", # filter out students
+         GTRFS!=88888888,
+         GTRFS!=99999999,
+         MOB5 %in% c("Non-migrants", "Different CSD, same census division",
+                     "Different CD, same province", "Interprovincial migrants"),
+         #!(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")),
+         SHELCO>0) %>% # don't consider households without shelter cost
+  housing_income_plot() + plot_annotation(
+  title = 'Canada internal movers 5 housing expenditure to household income ratios',
+  subtitle = '(non-student lead households with shelter cost greater than 0)',
+  caption = 'StatCan 2016 Census Individuals PUMF'
+)
+```
