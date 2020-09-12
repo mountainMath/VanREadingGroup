@@ -172,3 +172,57 @@ pumf_data %>%
   caption = 'StatCan 2016 Census Individuals PUMF'
 )
 ```
+
+```{r}
+cmas <- as.vector(unique(pumf_data$CMA)) # Extract each CMA
+
+lorenz_curve <- function(`CMA`) {  
+## Get income distribution for potential first-time buyers
+pumf_data_renters_u50 <- pumf_data %>%
+  filter(PRIHM=="Person is primary maintainer", # count households only once
+         ATTSCH=="Did not attend school", # filter out students
+         GTRFS!=88888888,
+         GTRFS!=99999999,
+         !(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")),
+         !(MOB1 %in% c("External migrants", "Not available")),  #Remove 1st year external migrants
+         SHELCO>0, 
+         !(AGEGRP %in% c("50 to 54 years", "55 to 59 years" ,"60 to 64 years", "65 to 69 years", "70 to 74 years","75 to 79 years", "80 to 84 years", "85 years and over", "Not available")), 
+         TENUR=="Rented or Band housing",
+         CMA==`CMA`)
+
+## Get price distribution for properties reasonably affordable to first-time buyers
+pumf_data_owners <- pumf_data %>%
+  filter(PRIHM=="Person is primary maintainer", # count households only once
+         !(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")), #should be redundant when looking at owners
+         SHELCO>0, 
+         TENUR=="Owned by a member of the household",
+         DTYPE!= "Not available",
+         CMA==`CMA`) %>%
+    mutate(`Annual mortgage cost`= case_when(VALUE < 1000000 ~ 12*pmt(r=(0.0225/12),pv=-0.99*VALUE, n=300, fv=0), #.99 is 5% down with 4% mortgage insurance  financed
+                                             VALUE >=1000000 ~ 12*pmt(r=(0.025/12),pv=-0.8*VALUE, n=360, fv=0))) %>%
+    filter(`Annual mortgage cost`< 0.3*max(pumf_data_renters_u50$income))  
+
+## Create dataframe for Lorenz curve
+ownership_affordability_`CMA` <- as.tibble(quantile(pumf_data_renters_u50$income, seq(0,1,0.1))) %>%
+  transmute(Income=value) %>%
+  mutate(`Max affordable housing cost`=0.3*Income, 
+          `Can affordably buy up to X price percentile`= ecdf(pumf_data_owners$`Annual mortgage cost`)(`Max affordable housing cost`),
+         Price=quantile(pumf_data_owners$VALUE, `Can affordably buy up to X price percentile`))
+ownership_affordability$`Income percentile` = seq(0,1,0.1)
+ownership_affordability$CMA = match.call()
+
+}
+        
+ggplot(ownership_affordability, aes(x=`Income percentile`, y=`Can affordably buy up to X price percentile`)) +
+  geom_point() +
+  geom_abline(slope = 1) +
+  geom_smooth(se=FALSE, span=0.5) +
+  theme_minimal() + 
+  labs(title = "Vancouver CMAs first-time home buyer Lorenz curve",
+       caption = "Statistics Canada 2016 Individual Census PUMF \n First-time home buyer income is proxied by using household income for under 50 years old non-subsidized, non-student, non-first year external migr renter households \n Affordability set at 30% of household income \n Assumes 5% down payment, 25 year amortization, and 2.25% mortgage rate for sub $1 million properties and \n 20% down payment, 30 year amortization, and 2.5% mortgage rate for  $1 million + properties \n Distribution of prices truncated to affordable to max of income for under 60 years old non-subsidized renter households") +
+  xlab("Income percentile of potential first-time home buyers") +
+  ylab("Can affordably buy up to X of truncated price percentile")
+```
+
+
+````
