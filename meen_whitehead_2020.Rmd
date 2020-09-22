@@ -225,4 +225,3 @@ ggplot(ownership_affordability, aes(x=`Income percentile`, y=`Can affordably buy
 ```
 
 
-````

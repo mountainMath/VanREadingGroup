@@ -1,0 +1,93 @@
+---
+title: "First-time buyer Lorenz curves"
+author: "Jens von Bergmann"
+date: "16/09/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(FinCal)
+```
+
+
+```{r}
+path=file.path(getOption("custom_data_path"),"pumf/pumf_2016/Data","Census_2016_Individual_PUMF.sav") 
+pumf_data <- foreign::read.spss(path) %>%
+  as_tibble() %>%
+  set_names(names(.) %>% toupper) %>%
+  mutate(housing=SHELCO*12) %>%
+  mutate(lower=case_when(HHINC=="Under $2,000" ~ 0,
+                         TRUE ~ as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC),"^\\$[\\d,]+")))),
+         upper=case_when(HHINC=="$250,000 and over" ~ 350000,
+                         TRUE~as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC),"\\$[\\d,]+$"))))) %>%
+  mutate(income=(lower+upper)/2) %>%
+  mutate(lower2=case_when(HHINC_AT=="Under $2,000" ~ 0,
+                         TRUE ~ as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC_AT),"^\\$[\\d,]+")))),
+         upper2=case_when(HHINC_AT=="$250,000 and over" ~ 300000,
+                         TRUE~as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC_AT),"\\$[\\d,]+$"))))) %>%
+  mutate(income_at=(lower2+upper2)/2+GTRFS) %>%
+  filter(!is.na(income),!is.na(income_at),!is.na(housing),TENUR!="Not available") %>%
+  mutate(scir=pmin(1,housing/income),
+         scir_at=pmin(1,housing/income_at))
+
+
+large_cmas <- pumf_data %>% count(CMA) %>%  top_n(9,n) %>% arrange(-n) %>% pull(CMA)
+```
+
+
+
+
+```{r}
+interest_rate <- 0.0225
+percentiles <- seq(0,1,0.1)
+potential_buyers_age <- c("20 to 24 years", "25 to 29 years", "30 to 34 years", 
+                          "35 to 39 years", "40 to 44 years", "45 to 49 years")
+
+
+income_data <- pumf_data %>%
+  filter(PRIHM=="Person is primary maintainer", # count households only once
+         ATTSCH=="Did not attend school", # filter out students
+         !(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")),
+         !(MOB1 %in% c("External migrants", "Not available")),  #Remove 1st year external migrants
+         AGEGRP %in% potential_buyers_age, 
+         income>0,
+         TENUR=="Rented or Band housing") %>%
+  group_by(CMA) %>%
+  summarize(Income=quantile(income, percentiles),percentile=percentiles,.groups="drop") %>%
+  mutate(`Max shelter cost`=0.3*Income)
+
+
+home_price_data <- pumf_data %>%
+  filter(PRIHM=="Person is primary maintainer", # count households only once
+         SHELCO>0, 
+         TENUR=="Owned by a member of the household",
+         DTYPE!= "Not available") %>%
+    mutate(`Annual mortgage cost`= case_when(VALUE < 1000000 ~ 12*pmt(r=(interest_rate/12),pv=-0.99*VALUE, n=300, fv=0), #.99 is 5% down with 4% mortgage insurance  financed
+                                             VALUE >=1000000 ~ 12*pmt(r=(interest_rate/12),pv=-0.8*VALUE, n=360, fv=0))) %>%
+  left_join(income_data %>%
+              group_by(CMA) %>%
+              summarize(max_income=max(Income)),
+            by="CMA") %>%
+    filter(`Annual mortgage cost`< 0.3*max_income)   # rarely happens because of top-coding
+  
+lorenz_data <- income_data %>%
+  group_by(CMA) %>%
+  mutate(`Can afford price percentile`= ecdf(home_price_data$`Annual mortgage cost`)(`Max shelter cost`)) 
+
+lorenz_data %>%
+  filter(CMA %in% large_cmas) %>%
+ggplot(aes(x=percentile, y=`Can afford price percentile`)) +
+  geom_point() +
+  facet_wrap("CMA") +
+  geom_line(data=tibble(x=c(0,1),y=c(0,1)),aes(x=x,y=y)) +
+  geom_smooth(se=FALSE, span=0.5) +
+  theme_minimal() + 
+  scale_x_continuous(labels=scales::percent,breaks=seq(0,1,0.2)) +
+  labs(title = "CMA first-time home buyer Lorenz curve",
+       caption = "Statistics Canada 2016 Individual Census PUMF \n First-time home buyer income is proxied by using household income for under 50 years old non-subsidized, non-student, non-first year external migr renter households \n Affordability set at 30% of household income \n Assumes 5% down payment, 25 year amortization, and 2.25% mortgage rate for sub $1 million properties and \n 20% down payment, 30 year amortization, and 2.5% mortgage rate for  $1 million + properties \n Distribution of prices truncated to affordable to max of income for under 60 years old non-subsidized renter households",
+  x="Income percentile of potential first-time home buyers",
+  y="Can affordably buy up to X of truncated price percentile")
+```
+
