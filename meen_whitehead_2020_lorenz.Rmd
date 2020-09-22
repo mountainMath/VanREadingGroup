@@ -1,0 +1,150 @@
+---
+title: "Housing affordability Lorenz curves"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE, message=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.width=9)
+library(tidyverse)
+library(patchwork)
+library(FinCal)
+```
+
+## Intro
+
+Following [Meen (2018)](http://housingevidence.ac.uk/wp-content/uploads/2018/10/R2018_02_01_How_to_measure_affordability_v2.pdf) this document shows the Lorenz affordability curves for a selection of Canadian CMAs. 
+
+```{r, include=FALSE}
+# path to 2016 pumf data (spss format)
+path="/Users/keithstewart/Data/Census/2016/Individual/Data/Census_2016_Individual_PUMF.sav"
+pumf_data <- foreign::read.spss(path) %>%
+  as_tibble() %>%
+  set_names(names(.) %>% toupper) %>%
+  mutate(housing=SHELCO*12) %>%
+  mutate(lower=case_when(HHINC=="Under $2,000" ~ 0,
+                         TRUE ~ as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC),"^\\$[\\d,]+")))),
+         upper=case_when(HHINC=="$250,000 and over" ~ 350000,
+                         TRUE~as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC),"\\$[\\d,]+$"))))) %>%
+  mutate(income=(lower+upper)/2) %>%
+  mutate(lower2=case_when(HHINC_AT=="Under $2,000" ~ 0,
+                         TRUE ~ as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC_AT),"^\\$[\\d,]+")))),
+         upper2=case_when(HHINC_AT=="$250,000 and over" ~ 300000,
+                         TRUE~as.numeric(gsub("\\$|,","",str_extract(as.character(HHINC_AT),"\\$[\\d,]+$"))))) %>%
+  mutate(income_at=(lower2+upper2)/2+GTRFS) %>%
+  filter(!is.na(income),!is.na(income_at),!is.na(housing),TENUR!="Not available") %>%
+  mutate(scir=pmin(1,housing/income),
+         scir_at=pmin(1,housing/income_at))
+```
+
+## Data
+
+```{r, echo=FALSE, message=FALSE}
+
+cmas <- as.vector(unique(pumf_data$CMA)) # Extract each CMA
+
+a_th <- 0.3 # set affordability percentile
+
+d <- seq(0,1,0.1) # set deciles
+
+d_names <- map_chr(d, ~paste0(.x*100, "%"))
+d_funs <- map(d, ~partial(quantile, probs=.x, na.rm=TRUE)) %>%
+  set_names(nm=d_names)
+
+### Work in progress <- need to map edcf function to nested rent and price distributions
+
+#   afford_funs <- map( , ~partial(edcf()))
+
+
+## Get incomes for renters
+renter_income <- pumf_data %>%
+    filter(PRIHM=="Person is primary maintainer", # count households only once
+         ATTSCH=="Did not attend school", # filter out students
+         GTRFS!=88888888,
+         GTRFS!=99999999,
+         !(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")), #remove those in subsidized housing
+         !(MOB1 %in% c("External migrants", "Not available")),  #Remove 1st year external migrants
+         SHELCO>0, 
+         #!(AGEGRP %in% c("50 to 54 years", "50 to 54 years", "55 to 59 years" ,"60 to 64 years", "65 to 69 years", "70 to 74 years","75 to 79 years", "80 to 84 years", "85 years and over", "Not available")), 
+         TENUR=="Rented or Band housing") %>%
+  group_by(CMA) %>%
+  summarize_at(vars(income), funs(!!!d_funs))
+
+max_housing_cost <- renter_income %>%
+  mutate(max_housing_cost=a_th*`100%`) %>%
+  select(CMA, max_housing_cost)
+
+renter_income_dec <- renter_income %>%
+  ungroup() %>%
+  pivot_longer(-CMA, names_to="Decile", values_to="Value") %>%
+  mutate(type="Renter income")
+
+
+## Get rents for units rented in last year
+rents <- pumf_data %>%
+  filter(PRIHM=="Person is primary maintainer", # count households only once
+         !(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")), # remove subsidized rents 
+         SHELCO>0, 
+         !(MOB1 %in% c("Non-movers", "Not applicable")), #filter out rents paid that lag market due to rent control and other factor
+         TENUR=="Rented or Band housing",
+         DTYPE!= "Not available") %>%
+  group_by(CMA) 
+
+rents_dec <- rents %>%
+  summarize_at(vars(housing), funs(!!!d_funs)) %>%
+  ungroup() %>%
+  pivot_longer(-CMA, names_to="Decile", values_to="Value") %>%
+  mutate(type="Rents")
+  
+rents_dis <- rents %>%
+  select(CMA, housing) %>%
+  nest()
+  
+
+## Get price distribution for properties reasonably affordable to first-time buyers
+prices <- pumf_data %>%
+  filter(PRIHM=="Person is primary maintainer", # count households only once
+         !(SUBSIDY %in% c("Yes, a subsidized dwelling", "Not available")), #should be redundant when looking at owners
+         SHELCO>0, 
+         TENUR=="Owned by a member of the household",
+         DTYPE!= "Not available") %>%
+    mutate(`Annual mortgage cost`= 12*pmt(r=(0.0225/12),pv=-0.99*VALUE, n=300, fv=0)) %>%
+  left_join(max_housing_cost) %>%
+  filter(`Annual mortgage cost`<= max_housing_cost) %>%
+  group_by(CMA) 
+
+prices_dec <- prices %>%
+  summarize_at(vars(VALUE), funs(!!!d_funs)) %>%
+  ungroup() %>%
+  pivot_longer(-CMA, names_to="Decile", values_to="Value") %>%
+  mutate(type="Price")
+
+prices_dis <- prices %>%
+  select(CMA, VALUE) %>%
+  nest()
+  
+## Combine data
+
+lorenz_data <- rbind(renter_income_dec, rents_dec, prices_dec) %>%
+  pivot_wider(id_cols = c(CMA, Decile), names_from="type", values_from=Value)
+
+
+## Plots
+
+ggplot(affordability, aes(x=`Income percentile`, y=`Can affordably buy/rent up to X percentile`, col=type)) +
+  geom_point() +
+  geom_abline(slope = 1) +
+  geom_smooth(se=FALSE, span=0.5) +
+  theme_minimal() + 
+  scale_x_continuous(breaks = seq(0,1,0.1)) +
+  scale_y_continuous(breaks = seq(0,1,0.1)) +
+  theme(legend.title = element_blank(),
+        legend.position='top') +
+  labs(title = "Vancouver CMA first-time homebuyer and market rent affordability Lorenz curves",
+       caption = "Statistics Canada 2016 Individual Census PUMF \n Renter income is non-subsidized, non-student, non-first year external migrant renter households \n Affordability set at 30% of household income \n Assumes 5% down payment, 25 year amortization, and 2.25% mortgage rate \n Distribution of prices truncated to affordable to max of renter income") +
+  xlab("Income percentile of renter households") 
+  #ylab("Can affordably rent up to X percentile of rent distribution")
+```
+
