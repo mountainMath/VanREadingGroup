@@ -74,11 +74,11 @@ home_price_data <- pumf_data %>%
   
 lorenz_data <- income_data %>%
   group_by(CMA) %>%
-  mutate(`Can afford price percentile`= ecdf(home_price_data$`Annual mortgage cost`)(`Max shelter cost`)) 
+  group_modify(function(d,g)d %>% mutate(`Can afford price percentile`= ecdf(filter(home_price_data,CMA==g$CMA)$`Annual mortgage cost`)(`Max shelter cost`))) 
 
 lorenz_data %>%
   filter(CMA %in% large_cmas) %>%
-ggplot(aes(x=percentile, y=`Can afford price percentile`)) +
+  ggplot(aes(x=percentile, y=`Can afford price percentile`)) +
   geom_point() +
   facet_wrap("CMA") +
   geom_line(data=tibble(x=c(0,1),y=c(0,1)),aes(x=x,y=y)) +
